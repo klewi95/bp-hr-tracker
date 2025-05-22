@@ -1,131 +1,172 @@
+import os
+import json
+import tempfile
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from fpdf import FPDF
-import tempfile
-import json
-import os
 
+# --- Streamlit Page Config ---
 st.set_page_config(page_title="Blutdruck Analyse", layout="wide")
+plt.style.use('seaborn-whitegrid')  # Einheitliches Styling
 
 st.title("📊 Blutdruck- und Pulsanalyse")
 
-# JSON Upload
-uploaded_file = st.file_uploader("📁 Lade deine Blutdruckdaten (JSON) hoch", type="json")
-
-if uploaded_file is not None:
-    data = json.load(uploaded_file)
+# --- Funktionen ---
+@st.cache_data
+def load_json_data(uploaded_file):
+    try:
+        data = json.load(uploaded_file)
+    except json.JSONDecodeError:
+        st.error("Ungültiges JSON-Format.")
+        st.stop()
+    if not isinstance(data, list) or not data:
+        st.error("Erwartet eine Liste von Datensätzen im JSON.")
+        st.stop()
+    # Spalten validieren
+    required_cols = {'datum', 'systolisch', 'diastolisch', 'puls'}
+    if not required_cols.issubset(data[0].keys()):
+        st.error("JSON fehlt mindestens eine der Spalten: " + ", ".join(required_cols))
+        st.stop()
     df = pd.DataFrame(data)
-    
-    # Trendlinien berechnen
-    def add_trendline(df, column):
-        x = np.arange(len(df))
-        y = df[column].values
-        coef = np.polyfit(x, y, 1)
-        return np.poly1d(coef)(x)
+    df['datum'] = pd.to_datetime(df['datum'], errors='coerce')
+    if df['datum'].isna().any():
+        st.warning("Mindestens ein Datum konnte nicht geparst werden.")
+    return df.sort_values('datum')
 
-    df['systolischTrend'] = add_trendline(df, 'systolisch')
-    df['diastolischTrend'] = add_trendline(df, 'diastolisch')
-    df['pulsTrend'] = add_trendline(df, 'puls')
-
-    # Statistik
-    def summary_stats(column):
-        return {
-            "Ø": round(df[column].mean(), 1),
-            "Min": df[column].min(),
-            "Max": df[column].max()
-        }
-
-    syst_stats = summary_stats("systolisch")
-    diast_stats = summary_stats("diastolisch")
-    puls_stats = summary_stats("puls")
-
-    # Optimale Bereiche
-    opt_syst = (90, 120)
-    opt_diast = (60, 80)
-    opt_puls = (60, 80)
-
-    # Diagramm
-    fig, ax1 = plt.subplots(figsize=(10, 5))
+@st.cache_data
+def compute_trend(df, column):
+    if len(df) < 2:
+        return np.full(len(df), np.nan)
     x = np.arange(len(df))
-    labels = df['datum']
+    y = df[column].values
+    coef = np.polyfit(x, y, 1)
+    return np.poly1d(coef)(x)
 
-    ax1.plot(x, df['systolisch'], label="Systolisch", color='red', marker='o')
-    ax1.plot(x, df['systolischTrend'], '--', color='red', alpha=0.5)
+@st.cache_data
+def compute_summary(df, column):
+    return {
+        "Ø": round(df[column].mean(), 1),
+        "Min": int(df[column].min()),
+        "Max": int(df[column].max())
+    }
 
-    ax1.plot(x, df['diastolisch'], label="Diastolisch", color='blue', marker='o')
-    ax1.plot(x, df['diastolischTrend'], '--', color='blue', alpha=0.5)
 
-    ax2 = ax1.twinx()
-    ax2.plot(x, df['puls'], label="Puls", color='green', marker='o')
-    ax2.plot(x, df['pulsTrend'], '--', color='green', alpha=0.5)
+def create_pdf_report(fig, stats, output_path):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Blutdruck Analyse", ln=True)
+    pdf.set_font("Arial", "", 12)
+    pdf.ln(5)
+    pdf.image(output_path, x=10, y=30, w=190)
 
-    ax1.axhspan(*opt_syst, color='red', alpha=0.1, label="Optimal Systolisch")
-    ax1.axhspan(*opt_diast, color='blue', alpha=0.1, label="Optimal Diastolisch")
-    ax2.axhspan(*opt_puls, color='green', alpha=0.1, label="Optimal Puls")
+    # Statistik im PDF
+    pdf.set_y(160)
+    for label, s in stats.items():
+        pdf.cell(0, 10, f"{label} Ø: {s['Ø']} (Min: {s['Min']}, Max: {s['Max']})", ln=True)
 
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(labels)
-    ax1.set_ylabel("mmHg")
-    ax2.set_ylabel("bpm")
-    fig.legend(loc='upper left')
-    fig.tight_layout()
+    return pdf
 
-    st.pyplot(fig)
-
-    # Zusammenfassung
-    st.subheader("📌 Zusammenfassung")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Systolisch Ø", f"{syst_stats['Ø']} mmHg")
-        st.text(f"Min: {syst_stats['Min']}, Max: {syst_stats['Max']}")
-        st.text(f"Optimal: {opt_syst[0]}–{opt_syst[1]}")
-
-    with col2:
-        st.metric("Diastolisch Ø", f"{diast_stats['Ø']} mmHg")
-        st.text(f"Min: {diast_stats['Min']}, Max: {diast_stats['Max']}")
-        st.text(f"Optimal: {opt_diast[0]}–{opt_diast[1]}")
-
-    with col3:
-        st.metric("Puls Ø", f"{puls_stats['Ø']} bpm")
-        st.text(f"Min: {puls_stats['Min']}, Max: {puls_stats['Max']}")
-        st.text(f"Optimal: {opt_puls[0]}–{opt_puls[1]}")
-
-    # Tabelle
-    st.subheader("📅 Einzelwerte")
-    st.dataframe(df[['datum', 'systolisch', 'diastolisch', 'puls']], use_container_width=True)
-
-    # PDF Export
-    st.subheader("📄 Export")
-    if st.button("Als PDF speichern"):
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-            fig.savefig(tmpfile.name, bbox_inches='tight')
-            image_path = tmpfile.name
-
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, "Blutdruck Analyse", ln=True)
-        pdf.set_font("Arial", "", 12)
-        pdf.ln(5)
-        pdf.image(image_path, x=10, y=30, w=190)
-
-        pdf.ln(100)
-        pdf.set_y(160)
-        pdf.cell(0, 10, f"Systolisch Ø: {syst_stats['Ø']} mmHg (Min: {syst_stats['Min']}, Max: {syst_stats['Max']})", ln=True)
-        pdf.cell(0, 10, f"Diastolisch Ø: {diast_stats['Ø']} mmHg (Min: {diast_stats['Min']}, Max: {diast_stats['Max']})", ln=True)
-        pdf.cell(0, 10, f"Puls Ø: {puls_stats['Ø']} bpm (Min: {puls_stats['Min']}, Max: {puls_stats['Max']})", ln=True)
-
-        pdf_output = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        pdf.output(pdf_output.name)
-
-        with open(pdf_output.name, "rb") as f:
-            st.download_button("📥 PDF herunterladen", f, file_name="blutdruck_bericht.pdf")
-
-        os.remove(image_path)
-        os.remove(pdf_output.name)
-
-else:
+# --- JSON-Upload ---
+uploaded_file = st.file_uploader("📁 Lade deine Blutdruckdaten (JSON) hoch", type="json")
+if not uploaded_file:
     st.info("Bitte lade eine JSON-Datei hoch, um deine Daten anzuzeigen.")
+    st.stop()
+
+df = load_json_data(uploaded_file)
+
+# Trendlinien berechnen
+for col in ['systolisch', 'diastolisch', 'puls']:
+    df[f'{col}Trend'] = compute_trend(df, col)
+
+# Statistik
+syst_stats = compute_summary(df, 'systolisch')
+diast_stats = compute_summary(df, 'diastolisch')
+puls_stats = compute_summary(df, 'puls')
+
+# Optimale Bereiche
+opt_ranges = {
+    'systolisch': (90, 120),
+    'diastolisch': (60, 80),
+    'puls': (60, 80)
+}
+
+# --- Plot erstellen ---
+fig, ax1 = plt.subplots(figsize=(10, 5))
+dates = df['datum']
+x = dates
+
+# Blutdruckkurven
+ax1.plot(dates, df['systolisch'], marker='o', label="Systolisch")
+ax1.plot(dates, df['systolischTrend'], linestyle='--', alpha=0.5)
+ax1.plot(dates, df['diastolisch'], marker='o', label="Diastolisch")
+ax1.plot(dates, df['diastolischTrend'], linestyle='--', alpha=0.5)
+
+# Puls auf zweiter Achse
+ax2 = ax1.twinx()
+ax2.plot(dates, df['puls'], marker='o', label="Puls")
+ax2.plot(dates, df['pulsTrend'], linestyle='--', alpha=0.5)
+
+# Highlight optimale Bereiche
+ax1.axhspan(*opt_ranges['systolisch'], alpha=0.1)
+ax1.axhspan(*opt_ranges['diastolisch'], alpha=0.1)
+ax2.axhspan(*opt_ranges['puls'], alpha=0.1)
+
+# Beschriftungen
+ax1.set_xlabel("Datum")
+ax1.set_ylabel("mmHg")
+ax2.set_ylabel("bpm")
+fig.autofmt_xdate()
+fig.legend(loc='upper center', ncol=3)
+fig.tight_layout()
+
+st.pyplot(fig)
+
+# --- Zusammenfassung ---
+st.subheader("📌 Zusammenfassung")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Systolisch Ø", f"{syst_stats['Ø']} mmHg")
+    st.text(f"Min: {syst_stats['Min']} | Max: {syst_stats['Max']}")
+    st.text(f"Optimal: {opt_ranges['systolisch'][0]}–{opt_ranges['systolisch'][1]}")
+
+with col2:
+    st.metric("Diastolisch Ø", f"{diast_stats['Ø']} mmHg")
+    st.text(f"Min: {diast_stats['Min']} | Max: {diast_stats['Max']}")
+    st.text(f"Optimal: {opt_ranges['diastolisch'][0]}–{opt_ranges['diastolisch'][1]}")
+
+with col3:
+    st.metric("Puls Ø", f"{puls_stats['Ø']} bpm")
+    st.text(f"Min: {puls_stats['Min']} | Max: {puls_stats['Max']}")
+    st.text(f"Optimal: {opt_ranges['puls'][0]}–{opt_ranges['puls'][1]}")
+
+# Einzelwerte-Tabelle
+st.subheader("📅 Einzelwerte")
+st.dataframe(df[['datum', 'systolisch', 'diastolisch', 'puls']], use_container_width=True)
+
+# --- PDF Export ---
+st.subheader("📄 Export")
+if st.button("Als PDF speichern"):
+    tmp_img = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    try:
+        fig.savefig(tmp_img.name, dpi=150, bbox_inches='tight')
+        pdf = create_pdf_report(fig, {
+            'Systolisch': syst_stats,
+            'Diastolisch': diast_stats,
+            'Puls': puls_stats
+        }, tmp_img.name)
+
+        tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        pdf.output(tmp_pdf.name)
+        tmp_pdf.close()
+
+        with open(tmp_pdf.name, "rb") as f:
+            st.download_button("📥 PDF herunterladen", f, file_name="blutdruck_bericht.pdf")
+    finally:
+        tmp_img.close()
+        if os.path.exists(tmp_img.name): os.remove(tmp_img.name)
+        if 'tmp_pdf' in locals() and os.path.exists(tmp_pdf.name): os.remove(tmp_pdf.name)
