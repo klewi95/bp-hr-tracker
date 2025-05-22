@@ -1,6 +1,7 @@
 import os
 import json
 import tempfile
+from datetime import datetime
 
 import streamlit as st
 import pandas as pd
@@ -29,13 +30,19 @@ def load_json_data(uploaded_file):
     if not isinstance(data, list) or not data:
         st.error("Erwartet eine Liste von Datensätzen im JSON.")
         st.stop()
-    # Spalten validieren
     required_cols = {'datum', 'systolisch', 'diastolisch', 'puls'}
     if not required_cols.issubset(data[0].keys()):
         st.error("JSON fehlt mindestens eine der Spalten: " + ", ".join(required_cols))
         st.stop()
     df = pd.DataFrame(data)
-    df['datum'] = pd.to_datetime(df['datum'], errors='coerce')
+    # Datum mit aktuellem Jahr ergänzen und parsen
+    year = datetime.now().year
+    df['datum_raw'] = df['datum'].astype(str)
+    df['datum'] = pd.to_datetime(
+        df['datum_raw'] + f'.{year}',
+        format='%d.%m.%Y',
+        errors='coerce'
+    )
     if df['datum'].isna().any():
         st.warning("Mindestens ein Datum konnte nicht geparst werden.")
     return df.sort_values('datum')
@@ -66,12 +73,9 @@ def create_pdf_report(fig, stats, output_path):
     pdf.set_font("Arial", "", 12)
     pdf.ln(5)
     pdf.image(output_path, x=10, y=30, w=190)
-
-    # Statistik im PDF
     pdf.set_y(160)
     for label, s in stats.items():
         pdf.cell(0, 10, f"{label} Ø: {s['Ø']} (Min: {s['Min']}, Max: {s['Max']})", ln=True)
-
     return pdf
 
 # --- JSON-Upload ---
