@@ -112,20 +112,24 @@ ax1.plot(dates, df['systolischTrend'], linestyle='--', alpha=0.5)
 ax1.plot(dates, df['diastolisch'], marker='o', label="Diastolisch")
 ax1.plot(dates, df['diastolischTrend'], linestyle='--', alpha=0.5)
 
-# Puls auf zweiter Achse
+# Puls auf zweiter Achse, aber ohne eigene Achsenbeschriftung
 ax2 = ax1.twinx()
 ax2.plot(dates, df['puls'], marker='o', label="Puls")
 ax2.plot(dates, df['pulsTrend'], linestyle='--', alpha=0.5)
+# Achsbeschriftung der rechten Achse entfernen und Ticks ausblenden
+ax2.set_ylabel("")
+ax2.set_yticklabels([])
+ax2.tick_params(left=False, right=False, labelleft=False, labelright=False)
 
 # Highlight optimale Bereiche
 ax1.axhspan(*opt_ranges['systolisch'], alpha=0.1)
 ax1.axhspan(*opt_ranges['diastolisch'], alpha=0.1)
-ax2.axhspan(*opt_ranges['puls'], alpha=0.1)
+# Für die Puls-Schattierung zweite Achse nutzen, aber Bereich auf linke Achse projizieren
+ax1.axhspan(opt_ranges['puls'][0], opt_ranges['puls'][1], alpha=0.05)
 
 # Beschriftungen
 ax1.set_xlabel("Datum")
-ax1.set_ylabel("mmHg")
-ax2.set_ylabel("bpm")
+ax1.set_ylabel("mmHg / bpm")
 fig.autofmt_xdate()
 fig.legend(loc='upper center', ncol=3)
 fig.tight_layout()
@@ -139,7 +143,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Systolisch Ø", f"{syst_stats['Ø']} mmHg")
     st.text(f"Min: {syst_stats['Min']} | Max: {syst_stats['Max']}")
-    st.text(f"Optimal: {opt_ranges['systolisch'][0]}–{opt_ranges['systolisch'][1]}")
+    st.text(f"Optimal: {opt_ranges['systolisch'][0]}–{opt_ranges['systolisch'][1]} ")
 
 with col2:
     st.metric("Diastolisch Ø", f"{diast_stats['Ø']} mmHg")
