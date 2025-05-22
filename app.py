@@ -10,7 +10,11 @@ from fpdf import FPDF
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Blutdruck Analyse", layout="wide")
-plt.style.use('seaborn-whitegrid')  # Einheitliches Styling
+# Einheitliches Styling mit Fallback
+try:
+    plt.style.use('seaborn-whitegrid')
+except (OSError, IOError):
+    plt.style.use('ggplot')
 
 st.title("📊 Blutdruck- und Pulsanalyse")
 
@@ -97,7 +101,6 @@ opt_ranges = {
 # --- Plot erstellen ---
 fig, ax1 = plt.subplots(figsize=(10, 5))
 dates = df['datum']
-x = dates
 
 # Blutdruckkurven
 ax1.plot(dates, df['systolisch'], marker='o', label="Systolisch")
